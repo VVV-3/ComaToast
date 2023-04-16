@@ -125,8 +125,8 @@ class ResNet1d(nn.Module):
             self.res_blocks += [resblk1d]
          
         # FNN
-        self.lin = nn.Linear(n_filters_out*n_samples_out, 1)
-        self.sigm = nn.Sigmoid()
+        self.lin = nn.Linear(n_filters_out*n_samples_out, 2)
+        self.sigm = nn.Softmax(-1)
 
     def forward(self, x):
         """Implement ResNet1d forward propagation"""
@@ -141,6 +141,6 @@ class ResNet1d(nn.Module):
             
         # Flatten array
         x = x.view(x.size(0), -1)
-        x = self.sigm( self.lin(x))
+        x = self.sigm(self.lin(x))
 
         return x

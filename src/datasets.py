@@ -8,7 +8,7 @@ import librosa
 class patientDataset(Dataset):
     def __init__(self, data_folder):
         
-        self.no_of_segments = 4
+        self.no_of_segments = 1
         
         self.data_folder  = data_folder
         self.patient_ids  = find_data_folders(data_folder)
@@ -17,7 +17,6 @@ class patientDataset(Dataset):
     def getMetadata(self, idx):
         # Load data.
         patient_id = self.patient_ids[idx]
-        patient_metadata, recording_metadata, recording_data = load_challenge_data(self.data_folder, patient_id)
         
         # Define file location.
         patient_metadata_file = os.path.join(self.data_folder, patient_id, patient_id + '.txt')
@@ -61,13 +60,13 @@ class eegDataset(Dataset):
                          'Fp2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'Fz-Cz', 'Cz-Pz']
         
         self.l_cutoff = 0.1
-        self.h_cutoff = 30
-        self.order = 5
+        self.h_cutoff = 10
+        self.order = 3
         
         self.final_sr = 2*self.h_cutoff
         
-        self.st_time = 5
-        self.end_time = 295
+        self.st_time = 0
+        self.end_time = 300
         self.hop_time = 10
         self.segment_length = 20
         
@@ -98,10 +97,9 @@ class eegDataset(Dataset):
                 
             st_mkr, end_mkr = st_time*self.final_sr, end_time*self.final_sr
             recording_segment = resampled_data[:, st_mkr:end_mkr]
-            mx_arr = np.max(np.abs(recording_segment) , axis=1)
-            mx_arr[mx_arr==0] = 1
-#             mx_arr = np.where(mx_arr == 0, 1, mx_arr)
-            recording_segment = (recording_segment.T/mx_arr ).T
+#             mx_arr = np.max(np.abs(recording_segment) , axis=1)
+#             mx_arr[mx_arr==0] = 1
+#             recording_segment = (recording_segment.T/mx_arr ).T
             
             self.recordings.append(recording_segment)
             self.outcomes.append(outcome)
@@ -116,7 +114,9 @@ class eegDataset(Dataset):
             self.addRecording(recording_data, sampling_frequency, outcome)
         
     def __getitem__(self, index):
-        return self.recordings[index], self.outcomes[index]
+        outs =[0,0]
+        outs[self.outcomes[index]] = 1
+        return self.recordings[index], torch.Tensor(outs)
         
     def __len__(self):
         return len(self.recordings)
