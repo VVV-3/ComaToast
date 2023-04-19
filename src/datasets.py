@@ -4,11 +4,12 @@ from helper_code import *
 import numpy as np, os, sys
 from tqdm import tqdm
 import librosa
+import mne
 
 class patientDataset(Dataset):
     def __init__(self, data_folder):
         
-        self.no_of_segments = 1
+        self.no_of_segments = 4
         
         self.data_folder  = data_folder
         self.patient_ids  = find_data_folders(data_folder)
@@ -87,22 +88,24 @@ class eegDataset(Dataset):
         return filtered_signal
         
     def addRecording(self, recording_data, sr, outcome):
-        filtered_data  = self.bandpassFilter(recording_data, sr)
-        resampled_data = librosa.resample(y=filtered_data, orig_sr=sr, target_sr=self.final_sr)
-        
-        for st_time in range(self.st_time, self.end_time, self.hop_time):
-            end_time = st_time+self.segment_length
-            if end_time > self.end_time:
-                continue
+#         filtered_data  = self.bandpassFilter(recording_data, sr)
+#         resampled_data = librosa.resample(y=filtered_data, orig_sr=sr, target_sr=self.final_sr)
+        mod_data, _ = mne.time_frequency.psd_array_welch(recording_data, sfreq=sr,  
+                                                      fmin=0.5,  fmax=30.0, verbose=False)
+# #         print(mod_data.shape)
+#         for st_time in range(self.st_time, self.end_time, self.hop_time):
+#             end_time = st_time+self.segment_length
+#             if end_time > self.end_time:
+#                 continue
                 
-            st_mkr, end_mkr = st_time*self.final_sr, end_time*self.final_sr
-            recording_segment = resampled_data[:, st_mkr:end_mkr]
-#             mx_arr = np.max(np.abs(recording_segment) , axis=1)
-#             mx_arr[mx_arr==0] = 1
-#             recording_segment = (recording_segment.T/mx_arr ).T
+#             st_mkr, end_mkr = st_time*self.final_sr, end_time*self.final_sr
+#             recording_segment = mod_data[:, st_mkr:end_mkr]
+# #             mx_arr = np.max(np.abs(recording_segment) , axis=1)
+# #             mx_arr[mx_arr==0] = 1
+# #             recording_segment = (recording_segment.T/mx_arr ).T
             
-            self.recordings.append(recording_segment)
-            self.outcomes.append(outcome)
+        self.recordings.append(mod_data)
+        self.outcomes.append(outcome)
         
     def addPatient(self, patientDataset, idx):
         recording_locations, outcomes = patientDataset[idx]
