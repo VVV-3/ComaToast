@@ -2,7 +2,6 @@ import torch
 from torch.utils.data import Dataset
 from helper_code import *
 import numpy as np, os, sys
-from tqdm import tqdm
 import librosa
 import mne
 
@@ -74,7 +73,7 @@ class eegDataset(Dataset):
         self.recordings = []
         self.outcomes   = []
         
-        for idx in tqdm(idxs):
+        for idx in idxs:
             self.addPatient(patientDataset, idx)
         
     def bandpassFilter(self, signal, sampling_rate):

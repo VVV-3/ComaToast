@@ -18,7 +18,6 @@ import joblib
 
 from src.datasets import patientDataset, eegDataset
 from src.resnet import ResNet1d
-from tqdm import tqdm
 import torch
 from torch.utils.data import DataLoader
 
