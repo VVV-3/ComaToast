@@ -130,14 +130,14 @@ class ResNet1d(nn.Module):
 
     def forward(self, x):
         """Implement ResNet1d forward propagation"""
-#         # First layers
-#         x = self.conv1(x)
-#         x = self.bn1(x)
+        # First layers
+        x = self.conv1(x)
+        x = self.bn1(x)
 
-#         # Residual blocks
-#         y = x
-#         for blk in self.res_blocks:
-#             x, y = blk(x, y)
+        # Residual blocks
+        y = x
+        for blk in self.res_blocks:
+            x, y = blk(x, y)
             
         # Flatten array
         x = x.view(x.size(0), -1)
