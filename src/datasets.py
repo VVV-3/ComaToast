@@ -25,7 +25,7 @@ def featurise_locs(locs):
     for loc in locs:
         fin.append(featurise_recording(loc))
     fin = np.array(fin)
-    print(fin.shape)
+#     print(fin.shape)
     return fin
 
 def featurise_labels(label):

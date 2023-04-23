@@ -76,7 +76,7 @@ def train_challenge_model(data_folder, model_folder, verbose):
     # Define parameters for random forest classifier and regressor.
     n_estimators   = 144  # Number of trees in the forest.
     max_leaf_nodes = 146  # Maximum number of leaf nodes in each tree.
-    random_state   = 1717  # Random state; set for reproducibility.
+    random_state   = 744  # Random state; set for reproducibility.
 
     # Impute any missing features; use the mean value by default.
     imputer = SimpleImputer().fit(features)
