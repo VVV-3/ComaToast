@@ -17,6 +17,8 @@ from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn import svm
 import joblib
 import xgboost as xgb
+import numpy as np
+from scipy import signal
 
 ################################################################################
 #
@@ -76,7 +78,7 @@ def train_challenge_model(data_folder, model_folder, verbose):
     # Define parameters for random forest classifier and regressor.
     n_estimators   = 144  # Number of trees in the forest.
     max_leaf_nodes = 146  # Maximum number of leaf nodes in each tree.
-    random_state   = 744  # Random state; set for reproducibility.
+    random_state   = 420 # Random state; set for reproducibility.
 
     # Impute any missing features; use the mean value by default.
     imputer = SimpleImputer().fit(features)
@@ -85,7 +87,7 @@ def train_challenge_model(data_folder, model_folder, verbose):
     features = imputer.transform(features)
     
     outcome_model = xgb.XGBClassifier(
-                                        n_estimators=150, tree_method='hist',
+                                        n_estimators=144, tree_method='hist',
                                         reg_lambda=0.85, max_leaves=100,
                                         subsample=0.4,
                                         max_depth=500, grow_policy = 'depthwise',
@@ -148,6 +150,22 @@ def save_challenge_model(model_folder, imputer, outcome_model, cpc_model):
     d = {'imputer': imputer, 'outcome_model': outcome_model, 'cpc_model': cpc_model}
     filename = os.path.join(model_folder, 'models.sav')
     joblib.dump(d, filename, protocol=0)
+    
+def bsr(eeg_data, sfreq):
+    epoch_duration = 1
+    freq_band = [0.5, 25]
+    bsr_threshold = 0.5
+    nyquist_freq = sfreq / 2
+    b, a = signal.butter(4, [freq_band[0] / nyquist_freq, freq_band[1] / nyquist_freq], btype='bandpass')
+    filtered_data = signal.filtfilt(b, a, eeg_data)
+
+    epoch_samples = int(epoch_duration * sfreq)
+    n_epochs = filtered_data.shape[-1] // epoch_samples
+    epochs = filtered_data[:, :n_epochs * epoch_samples].reshape(18, n_epochs, epoch_samples)
+    
+    rms_amplitude = np.sqrt(np.mean(epochs ** 2, axis=-1))
+    median_rms = np.median(rms_amplitude)
+    bsr = (rms_amplitude < bsr_threshold * median_rms).mean(axis=-1) * 100
 
 # Extract features from the data.
 def get_features(patient_metadata, recording_metadata, recording_data):
@@ -201,13 +219,17 @@ def get_features(patient_metadata, recording_metadata, recording_data):
 
     # Compute the power spectral density for the delta, theta, alpha, and beta frequency bands for each channel of the most
     # recent recording.
-    index = None
+    index = -1
+    snd = None
     for i in reversed(range(num_recordings)):
         signal_data, sampling_frequency, signal_channels = recording_data[i]
         if signal_data is not None:
-            index = i
-            break
-
+            if index == -1:
+                index = i
+#             print(i)
+            snd = i
+            
+#     print(index, snd)
     if index is not None:
         signal_data, sampling_frequency, signal_channels = recording_data[index]
         signal_data = reorder_recording_channels(signal_data, signal_channels, channels) # Reorder the channels in the signal data, as needed, for consistency across different recordings.
@@ -221,14 +243,33 @@ def get_features(patient_metadata, recording_metadata, recording_data):
         theta_psd_mean = np.nanmean(theta_psd, axis=1)
         alpha_psd_mean = np.nanmean(alpha_psd, axis=1)
         beta_psd_mean  = np.nanmean(beta_psd,  axis=1)
-
+        bs = bsr(signal_data, sampling_frequency)
         quality_score = get_quality_scores(recording_metadata)[index]
     else:
         delta_psd_mean = theta_psd_mean = alpha_psd_mean = beta_psd_mean = float('nan') * np.ones(num_channels)
         quality_score = float('nan')
+        
+    if index is not None:
+        signal_data, sampling_frequency, signal_channels = recording_data[snd]
+        signal_data = reorder_recording_channels(signal_data, signal_channels, channels) # Reorder the channels in the signal data, as needed, for consistency across different recordings.
 
-#     recording_features = np.hstack((signal_mean, signal_std, delta_psd_mean, theta_psd_mean, alpha_psd_mean, beta_psd_mean, quality_score))
-    recording_features = np.hstack((signal_mean, signal_std,delta_psd_mean, theta_psd_mean, alpha_psd_mean, beta_psd_mean))
+        delta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=0.5,  fmax=8.0, verbose=False)
+        theta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=4.0,  fmax=8.0, verbose=False)
+        alpha_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=8.0, fmax=12.0, verbose=False)
+        beta_psd,  _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency, fmin=12.0, fmax=30.0, verbose=False)
+
+        delta_psd_mean2 = np.nanmean(delta_psd, axis=1)
+        theta_psd_mean2 = np.nanmean(theta_psd, axis=1)
+        alpha_psd_mean2 = np.nanmean(alpha_psd, axis=1)
+        beta_psd_mean2  = np.nanmean(beta_psd,  axis=1)
+
+        quality_score = get_quality_scores(recording_metadata)[index]
+    else:
+        delta_psd_mean2 = theta_psd_mean2 = alpha_psd_mean2 = beta_psd_mean2 = float('nan') * np.ones(num_channels)
+        quality_score = float('nan')
+
+    recording_features = np.hstack((signal_mean, signal_std, delta_psd_mean, theta_psd_mean, alpha_psd_mean, beta_psd_mean, bs))
+#     recording_features = np.hstack((signal_mean, signal_std, delta_psd_mean, theta_psd_mean, alpha_psd_mean, beta_psd_mean, delta_psd_mean2, theta_psd_mean2, alpha_psd_mean2, beta_psd_mean2))
 
     # Combine the features from the patient metadata and the recording data and metadata.
     features = np.hstack((patient_features, recording_features))
