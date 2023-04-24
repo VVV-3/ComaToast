@@ -230,7 +230,7 @@ def get_features(patient_metadata, recording_metadata, recording_data):
             snd = i
             
 #     print(index, snd)
-    if index is not None:
+    if index is not None or index != -1:
         signal_data, sampling_frequency, signal_channels = recording_data[index]
         signal_data = reorder_recording_channels(signal_data, signal_channels, channels) # Reorder the channels in the signal data, as needed, for consistency across different recordings.
 
@@ -249,24 +249,24 @@ def get_features(patient_metadata, recording_metadata, recording_data):
         delta_psd_mean = theta_psd_mean = alpha_psd_mean = beta_psd_mean = float('nan') * np.ones(num_channels)
         quality_score = float('nan')
         
-    if index is not None:
-        signal_data, sampling_frequency, signal_channels = recording_data[snd]
-        signal_data = reorder_recording_channels(signal_data, signal_channels, channels) # Reorder the channels in the signal data, as needed, for consistency across different recordings.
+#     if index is not None:
+#         signal_data, sampling_frequency, signal_channels = recording_data[snd]
+#         signal_data = reorder_recording_channels(signal_data, signal_channels, channels) # Reorder the channels in the signal data, as needed, for consistency across different recordings.
 
-        delta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=0.5,  fmax=8.0, verbose=False)
-        theta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=4.0,  fmax=8.0, verbose=False)
-        alpha_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=8.0, fmax=12.0, verbose=False)
-        beta_psd,  _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency, fmin=12.0, fmax=30.0, verbose=False)
+#         delta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=0.5,  fmax=8.0, verbose=False)
+#         theta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=4.0,  fmax=8.0, verbose=False)
+#         alpha_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=8.0, fmax=12.0, verbose=False)
+#         beta_psd,  _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency, fmin=12.0, fmax=30.0, verbose=False)
 
-        delta_psd_mean2 = np.nanmean(delta_psd, axis=1)
-        theta_psd_mean2 = np.nanmean(theta_psd, axis=1)
-        alpha_psd_mean2 = np.nanmean(alpha_psd, axis=1)
-        beta_psd_mean2  = np.nanmean(beta_psd,  axis=1)
+#         delta_psd_mean2 = np.nanmean(delta_psd, axis=1)
+#         theta_psd_mean2 = np.nanmean(theta_psd, axis=1)
+#         alpha_psd_mean2 = np.nanmean(alpha_psd, axis=1)
+#         beta_psd_mean2  = np.nanmean(beta_psd,  axis=1)
 
-        quality_score = get_quality_scores(recording_metadata)[index]
-    else:
-        delta_psd_mean2 = theta_psd_mean2 = alpha_psd_mean2 = beta_psd_mean2 = float('nan') * np.ones(num_channels)
-        quality_score = float('nan')
+#         quality_score = get_quality_scores(recording_metadata)[index]
+#     else:
+#         delta_psd_mean2 = theta_psd_mean2 = alpha_psd_mean2 = beta_psd_mean2 = float('nan') * np.ones(num_channels)
+#         quality_score = float('nan')
 
     recording_features = np.hstack((signal_mean, signal_std, delta_psd_mean, theta_psd_mean, alpha_psd_mean, beta_psd_mean, bs))
 #     recording_features = np.hstack((signal_mean, signal_std, delta_psd_mean, theta_psd_mean, alpha_psd_mean, beta_psd_mean, delta_psd_mean2, theta_psd_mean2, alpha_psd_mean2, beta_psd_mean2))
