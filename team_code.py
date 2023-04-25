@@ -219,18 +219,15 @@ def get_features(patient_metadata, recording_metadata, recording_data):
 
     # Compute the power spectral density for the delta, theta, alpha, and beta frequency bands for each channel of the most
     # recent recording.
-    index = -1
-    snd = None
+    index = None
     for i in reversed(range(num_recordings)):
         signal_data, sampling_frequency, signal_channels = recording_data[i]
         if signal_data is not None:
-            if index == -1:
-                index = i
-#             print(i)
-            snd = i
+            index = i
+            break
             
 #     print(index, snd)
-    if index is not None or index != -1:
+    if index is not None:
         signal_data, sampling_frequency, signal_channels = recording_data[index]
         signal_data = reorder_recording_channels(signal_data, signal_channels, channels) # Reorder the channels in the signal data, as needed, for consistency across different recordings.
 
@@ -246,7 +243,7 @@ def get_features(patient_metadata, recording_metadata, recording_data):
         bs = bsr(signal_data, sampling_frequency)
         quality_score = get_quality_scores(recording_metadata)[index]
     else:
-        delta_psd_mean = theta_psd_mean = alpha_psd_mean = beta_psd_mean = float('nan') * np.ones(num_channels)
+        delta_psd_mean = theta_psd_mean = alpha_psd_mean = beta_psd_mean = bs = float('nan') * np.ones(num_channels)
         quality_score = float('nan')
         
 #     if index is not None:
