@@ -5,7 +5,7 @@
 
 ################################################################################
 #
-# Optional libraries and functions. You can change or remove them.
+# Optional libraries, functions, and variables. You can change or remove them.
 #
 ################################################################################
 
@@ -14,10 +14,9 @@ import numpy as np, os, sys
 import mne
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn import svm
 import joblib
+
 import xgboost as xgb
-import numpy as np
 from scipy import signal
 
 ################################################################################
@@ -53,15 +52,11 @@ def train_challenge_model(data_folder, model_folder, verbose):
         if verbose >= 2:
             print('    {}/{}...'.format(i+1, num_patients))
 
-        # Load data.
-        patient_id = patient_ids[i]
-        patient_metadata, recording_metadata, recording_data = load_challenge_data(data_folder, patient_id)
-
-        # Extract features.
-        current_features = get_features(patient_metadata, recording_metadata, recording_data)
+        current_features = get_features(data_folder, patient_ids[i])
         features.append(current_features)
 
         # Extract labels.
+        patient_metadata = load_challenge_data(data_folder, patient_ids[i])
         current_outcome = get_outcome(patient_metadata)
         outcomes.append(current_outcome)
         current_cpc = get_cpc(patient_metadata)
@@ -73,19 +68,18 @@ def train_challenge_model(data_folder, model_folder, verbose):
 
     # Train the models.
     if verbose >= 1:
-        print('Training the Challenge models on the Challenge data...')
+        print('Training the Challenge model on the Challenge data...')
 
     # Define parameters for random forest classifier and regressor.
     n_estimators   = 144  # Number of trees in the forest.
     max_leaf_nodes = 146  # Maximum number of leaf nodes in each tree.
-    random_state   = 420 # Random state; set for reproducibility.
+    random_state   = 420  # Random state; set for reproducibility.
 
     # Impute any missing features; use the mean value by default.
     imputer = SimpleImputer().fit(features)
 
     # Train the models.
     features = imputer.transform(features)
-    
     outcome_model = xgb.XGBClassifier(
                                         n_estimators=144, tree_method='hist',
                                         reg_lambda=0.85, max_leaves=100,
@@ -93,9 +87,6 @@ def train_challenge_model(data_folder, model_folder, verbose):
                                         max_depth=500, grow_policy = 'depthwise',
                                         random_state=random_state
                                     ).fit(features, outcomes.ravel())
-#     outcome_model = RandomForestClassifier(
-#         n_estimators=n_estimators, max_leaf_nodes=max_leaf_nodes, random_state=random_state).fit(features, outcomes.ravel())
-    
     cpc_model = RandomForestRegressor(
         n_estimators=n_estimators, max_leaf_nodes=max_leaf_nodes, random_state=random_state).fit(features, cpcs.ravel())
 
@@ -118,20 +109,16 @@ def run_challenge_models(models, data_folder, patient_id, verbose):
     outcome_model = models['outcome_model']
     cpc_model = models['cpc_model']
 
-    # Load data.
-    patient_metadata, recording_metadata, recording_data = load_challenge_data(data_folder, patient_id)
-
     # Extract features.
-    features = get_features(patient_metadata, recording_metadata, recording_data)
+    features = get_features(data_folder, patient_id)
     features = features.reshape(1, -1)
 
     # Impute missing data.
     features = imputer.transform(features)
 
     # Apply models to features.
-    outcome = outcome_model.predict(features)
-    outcome_probability = outcome_model.predict_proba(features)[0,1]
-#     print(outcome_probability)
+    outcome = outcome_model.predict(features)[0]
+    outcome_probability = outcome_model.predict_proba(features)[0, 1]
     cpc = cpc_model.predict(features)[0]
 
     # Ensure that the CPC score is between (or equal to) 1 and 5.
@@ -150,34 +137,125 @@ def save_challenge_model(model_folder, imputer, outcome_model, cpc_model):
     d = {'imputer': imputer, 'outcome_model': outcome_model, 'cpc_model': cpc_model}
     filename = os.path.join(model_folder, 'models.sav')
     joblib.dump(d, filename, protocol=0)
+
+# Preprocess data.
+def preprocess_data(data, sampling_frequency, utility_frequency):
+    # Define the bandpass frequencies.
+    passband = [0.1, 30.0]
+
+    # Promote the data to double precision because these libraries expect double precision.
+    data = np.asarray(data, dtype=np.float64)
+
+    # If the utility frequency is between bandpass frequencies, then apply a notch filter.
+    if utility_frequency is not None and passband[0] <= utility_frequency <= passband[1]:
+        data = mne.filter.notch_filter(data, sampling_frequency, utility_frequency, n_jobs=4, verbose='error')
+
+    # Apply a bandpass filter.
+    data = mne.filter.filter_data(data, sampling_frequency, passband[0], passband[1], n_jobs=4, verbose='error')
+
+    # Resample the data.
+    if sampling_frequency % 2 == 0:
+        resampling_frequency = 128
+    else:
+        resampling_frequency = 125
+    lcm = np.lcm(int(round(sampling_frequency)), int(round(resampling_frequency)))
+    up = int(round(lcm / sampling_frequency))
+    down = int(round(lcm / resampling_frequency))
+    resampling_frequency = sampling_frequency * up / down
+    data = scipy.signal.resample_poly(data, up, down, axis=1)
+
+    # Scale the data to the interval [-1, 1].
+    min_value = np.min(data)
+    max_value = np.max(data)
+    if min_value != max_value:
+        data = 2.0 / (max_value - min_value) * (data - 0.5 * (min_value + max_value))
+    else:
+        data = 0 * data
+
+    return data, resampling_frequency
+
+# Extract features.
+def get_features(data_folder, patient_id):
+    # Load patient data.
+    patient_metadata = load_challenge_data(data_folder, patient_id)
+    recording_ids = find_recording_files(data_folder, patient_id)
+    num_recordings = len(recording_ids)
+
+    # Extract patient features.
+    patient_features = get_patient_features(patient_metadata)
+
+    # Extract EEG features.
+    eeg_channels = ['F3', 'P3', 'F4', 'P4']
+    group = 'EEG'
+    bsr_features = float('nan') * np.ones(1)
+    if num_recordings > 0:
+        recording_id = recording_ids[-1]
+        recording_location = os.path.join(data_folder, patient_id, '{}_{}'.format(recording_id, group))
+        if os.path.exists(recording_location + '.hea'):
+            data, channels, sampling_frequency = load_recording_data(recording_location)
+            utility_frequency = get_utility_frequency(recording_location + '.hea')
+
+            if all(channel in channels for channel in eeg_channels):
+                data, channels = reduce_channels(data, channels, eeg_channels)
+                data, sampling_frequency = preprocess_data(data, sampling_frequency, utility_frequency)
+                data = np.array([data[0, :] - data[1, :], data[2, :] - data[3, :]]) # Convert to bipolar montage: F3-P3 and F4-P4
+                bsr_features = bsr(data, sampling_frequency)
+                eeg_features = get_eeg_features(data, sampling_frequency).flatten()
+            else:
+                eeg_features = float('nan') * np.ones(8) # 2 bipolar channels * 4 features / channel
+        else:
+            eeg_features = float('nan') * np.ones(8) # 2 bipolar channels * 4 features / channel
+    else:
+        eeg_features = float('nan') * np.ones(8) # 2 bipolar channels * 4 features / channel
+
+    # Extract ECG features.
+    ecg_channels = ['ECG', 'ECGL', 'ECGR', 'ECG1', 'ECG2']
+    group = 'ECG'
     
-def bsr(eeg_data, sfreq):
+    if num_recordings > 0:
+        recording_id = recording_ids[0]
+        recording_location = os.path.join(data_folder, patient_id, '{}_{}'.format(recording_id, group))
+        if os.path.exists(recording_location + '.hea'):
+            data, channels, sampling_frequency = load_recording_data(recording_location)
+            utility_frequency = get_utility_frequency(recording_location + '.hea')
+
+            data, channels = reduce_channels(data, channels, ecg_channels)
+            data, sampling_frequency = preprocess_data(data, sampling_frequency, utility_frequency)
+            features = get_ecg_features(data)
+            ecg_features = expand_channels(features, channels, ecg_channels).flatten()
+            
+        else:
+            ecg_features = float('nan') * np.ones(10) # 5 channels * 2 features / channel
+    else:
+        ecg_features = float('nan') * np.ones(10) # 5 channels * 2 features / channel
+
+    # Extract features.
+    return np.hstack((patient_features, eeg_features, ecg_features, bsr_features))
+
+def bsr(filtered_data, sfreq):
+#     print(filtered_data.shape)
     epoch_duration = 1
-    freq_band = [0.5, 25]
     bsr_threshold = 0.5
-    nyquist_freq = sfreq / 2
-    b, a = signal.butter(4, [freq_band[0] / nyquist_freq, freq_band[1] / nyquist_freq], btype='bandpass')
-    filtered_data = signal.filtfilt(b, a, eeg_data)
 
     epoch_samples = int(epoch_duration * sfreq)
     n_epochs = filtered_data.shape[-1] // epoch_samples
-    epochs = filtered_data[:, :n_epochs * epoch_samples].reshape(18, n_epochs, epoch_samples)
+    epochs = filtered_data[:, :n_epochs * epoch_samples].reshape(2, n_epochs, epoch_samples)
     
     rms_amplitude = np.sqrt(np.mean(epochs ** 2, axis=-1))
     median_rms = np.median(rms_amplitude)
     bsr = (rms_amplitude < bsr_threshold * median_rms).mean(axis=-1) * 100
+#     print(bsr.shape)
+    return bsr
 
-# Extract features from the data.
-def get_features(patient_metadata, recording_metadata, recording_data):
-    # Extract features from the patient metadata.
-    age = get_age(patient_metadata)
-    sex = get_sex(patient_metadata)
-    rosc = get_rosc(patient_metadata)
-    ohca = get_ohca(patient_metadata)
-    vfib = get_vfib(patient_metadata)
-    ttm = get_ttm(patient_metadata)
+# Extract patient features from the data.
+def get_patient_features(data):
+    age = get_age(data)
+    sex = get_sex(data)
+    rosc = get_rosc(data)
+    ohca = get_ohca(data)
+    shockable_rhythm = get_shockable_rhythm(data)
+    ttm = get_ttm(data)
 
-    # Use one-hot encoding for sex; add more variables
     sex_features = np.zeros(2, dtype=int)
     if sex == 'Female':
         female = 1
@@ -192,83 +270,45 @@ def get_features(patient_metadata, recording_metadata, recording_data):
         male   = 0
         other  = 1
 
-    # Combine the patient features.
-    patient_features = np.array([age]) #[age, female, male, other, rosc, ohca, vfib, ttm]
+    features = np.array((age, female, male, other, rosc, ohca, shockable_rhythm, ttm))
 
-    # Extract features from the recording data and metadata.
-    channels = ['Fp1-F7', 'F7-T3', 'T3-T5', 'T5-O1', 'Fp2-F8', 'F8-T4', 'T4-T6', 'T6-O2', 'Fp1-F3',
-                'F3-C3', 'C3-P3', 'P3-O1', 'Fp2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'Fz-Cz', 'Cz-Pz']
-    num_channels = len(channels)
-    num_recordings = len(recording_data)
+    return features
 
-    # Compute mean and standard deviation for each channel for each recording.
-    available_signal_data = list()
-    for i in range(num_recordings):
-        signal_data, sampling_frequency, signal_channels = recording_data[i]
-        if signal_data is not None:
-            signal_data = reorder_recording_channels(signal_data, signal_channels, channels) # Reorder the channels in the signal data, as needed, for consistency across different recordings.
-            available_signal_data.append(signal_data)
+# Extract features from the EEG data.
+def get_eeg_features(data, sampling_frequency):
+    num_channels, num_samples = np.shape(data)
 
-    if len(available_signal_data) > 0:
-        available_signal_data = np.hstack(available_signal_data)
-        signal_mean = np.nanmean(available_signal_data, axis=1)
-        signal_std  = np.nanstd(available_signal_data, axis=1)
-    else:
-        signal_mean = float('nan') * np.ones(num_channels)
-        signal_std  = float('nan') * np.ones(num_channels)
-
-    # Compute the power spectral density for the delta, theta, alpha, and beta frequency bands for each channel of the most
-    # recent recording.
-    index = None
-    for i in reversed(range(num_recordings)):
-        signal_data, sampling_frequency, signal_channels = recording_data[i]
-        if signal_data is not None:
-            index = i
-            break
-            
-#     print(index, snd)
-    if index is not None:
-        signal_data, sampling_frequency, signal_channels = recording_data[index]
-        signal_data = reorder_recording_channels(signal_data, signal_channels, channels) # Reorder the channels in the signal data, as needed, for consistency across different recordings.
-
-        delta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=0.5,  fmax=8.0, verbose=False)
-        theta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=4.0,  fmax=8.0, verbose=False)
-        alpha_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=8.0, fmax=12.0, verbose=False)
-        beta_psd,  _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency, fmin=12.0, fmax=30.0, verbose=False)
+    if num_samples > 0:
+        delta_psd, _ = mne.time_frequency.psd_array_welch(data, sfreq=sampling_frequency,  fmin=0.5,  fmax=8.0, verbose=False)
+        theta_psd, _ = mne.time_frequency.psd_array_welch(data, sfreq=sampling_frequency,  fmin=4.0,  fmax=8.0, verbose=False)
+        alpha_psd, _ = mne.time_frequency.psd_array_welch(data, sfreq=sampling_frequency,  fmin=8.0, fmax=12.0, verbose=False)
+        beta_psd,  _ = mne.time_frequency.psd_array_welch(data, sfreq=sampling_frequency, fmin=12.0, fmax=30.0, verbose=False)
 
         delta_psd_mean = np.nanmean(delta_psd, axis=1)
         theta_psd_mean = np.nanmean(theta_psd, axis=1)
         alpha_psd_mean = np.nanmean(alpha_psd, axis=1)
         beta_psd_mean  = np.nanmean(beta_psd,  axis=1)
-        bs = bsr(signal_data, sampling_frequency)
-        quality_score = get_quality_scores(recording_metadata)[index]
     else:
-        delta_psd_mean = theta_psd_mean = alpha_psd_mean = beta_psd_mean = bs = float('nan') * np.ones(num_channels)
-        quality_score = float('nan')
-        
-#     if index is not None:
-#         signal_data, sampling_frequency, signal_channels = recording_data[snd]
-#         signal_data = reorder_recording_channels(signal_data, signal_channels, channels) # Reorder the channels in the signal data, as needed, for consistency across different recordings.
+        delta_psd_mean = theta_psd_mean = alpha_psd_mean = beta_psd_mean = float('nan') * np.ones(num_channels)
 
-#         delta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=0.5,  fmax=8.0, verbose=False)
-#         theta_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=4.0,  fmax=8.0, verbose=False)
-#         alpha_psd, _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency,  fmin=8.0, fmax=12.0, verbose=False)
-#         beta_psd,  _ = mne.time_frequency.psd_array_welch(signal_data, sfreq=sampling_frequency, fmin=12.0, fmax=30.0, verbose=False)
+    features = np.array((delta_psd_mean, theta_psd_mean, alpha_psd_mean, beta_psd_mean)).T
 
-#         delta_psd_mean2 = np.nanmean(delta_psd, axis=1)
-#         theta_psd_mean2 = np.nanmean(theta_psd, axis=1)
-#         alpha_psd_mean2 = np.nanmean(alpha_psd, axis=1)
-#         beta_psd_mean2  = np.nanmean(beta_psd,  axis=1)
+    return features
 
-#         quality_score = get_quality_scores(recording_metadata)[index]
-#     else:
-#         delta_psd_mean2 = theta_psd_mean2 = alpha_psd_mean2 = beta_psd_mean2 = float('nan') * np.ones(num_channels)
-#         quality_score = float('nan')
+# Extract features from the ECG data.
+def get_ecg_features(data):
+    num_channels, num_samples = np.shape(data)
 
-    recording_features = np.hstack((signal_mean, signal_std, delta_psd_mean, theta_psd_mean, alpha_psd_mean, beta_psd_mean, bs))
-#     recording_features = np.hstack((signal_mean, signal_std, delta_psd_mean, theta_psd_mean, alpha_psd_mean, beta_psd_mean, delta_psd_mean2, theta_psd_mean2, alpha_psd_mean2, beta_psd_mean2))
+    if num_samples > 0:
+        mean = np.mean(data, axis=1)
+        std  = np.std(data, axis=1)
+    elif num_samples == 1:
+        mean = np.mean(data, axis=1)
+        std  = float('nan') * np.ones(num_channels)
+    else:
+        mean = float('nan') * np.ones(num_channels)
+        std = float('nan') * np.ones(num_channels)
 
-    # Combine the features from the patient metadata and the recording data and metadata.
-    features = np.hstack((patient_features, recording_features))
+    features = np.array((mean, std)).T
 
     return features
