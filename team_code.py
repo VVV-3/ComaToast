@@ -199,7 +199,7 @@ def get_features(data_folder, patient_id):
                 data, channels = reduce_channels(data, channels, eeg_channels)
                 data, sampling_frequency = preprocess_data(data, sampling_frequency, utility_frequency)
                 data = np.array([data[0, :] - data[1, :], data[2, :] - data[3, :]]) # Convert to bipolar montage: F3-P3 and F4-P4
-                bsr_features = bsr(data, sampling_frequency)
+#                 bsr_features = bsr(data, sampling_frequency)
                 eeg_features = get_eeg_features(data, sampling_frequency).flatten()
             else:
                 eeg_features = float('nan') * np.ones(8) # 2 bipolar channels * 4 features / channel
@@ -230,7 +230,7 @@ def get_features(data_folder, patient_id):
         ecg_features = float('nan') * np.ones(10) # 5 channels * 2 features / channel
 
     # Extract features.
-    return np.hstack((patient_features, eeg_features, ecg_features, bsr_features))
+    return np.hstack((patient_features, eeg_features, ecg_features))
 
 def bsr(filtered_data, sfreq):
 #     print(filtered_data.shape)
